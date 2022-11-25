@@ -9,7 +9,7 @@
     4- Acima de duas vezes, preço normal de etiqueta mais juros de 10%;
 */
 const precoEtiqueta = 100;
-const formaDePagamento = 4;
+const formaDePagamento = 1;
 
 if (formaDePagamento === 1) {
     console.log(precoEtiqueta - (precoEtiqueta * 0.1));
