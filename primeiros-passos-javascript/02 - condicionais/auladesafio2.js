@@ -1,9 +1,11 @@
 
-const numero = 5;
-const ehNumeroPar = (numero % 2) === 0;
+const numero = 0;
+const numDivisivelPor5 = (numero % 5) === 0;
 
-if (ehNumeroPar) {
-    console.log('O número é par');
+if(numero === 0) {
+    console.log('O número é inválido');
+} else if (numDivisivelPor5) {
+    console.log('Sim, é divisível por 5');
 } else {
-    console.log('O número é ímpar');
+    console.log('Não, não é divisível por 5');
 }
