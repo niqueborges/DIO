@@ -12,7 +12,7 @@ LOCALSTACK_HOST = os.getenv("LOCALSTACK_HOST", "host.docker.internal")  # <- Alt
 ENDPOINT_URL = f"http://{LOCALSTACK_HOST}:4566"
 
 dynamodb = boto3.resource("dynamodb", endpoint_url=ENDPOINT_URL)
-table = dynamodb.Table("NotasFiscais")
+table = dynamodb.Table("NotasFiscais") 
 
 sqs = boto3.client("sqs", endpoint_url=ENDPOINT_URL)
 queue_url = f"{ENDPOINT_URL}/000000000000/minha-fila"
