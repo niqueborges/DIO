@@ -18,13 +18,13 @@ provider "aws" {
   }
 }
 
-# 🔹 Criar SQS (Fila de Mensagens)
+# 🔹 SQS
 resource "aws_sqs_queue" "queue" {
   name                      = "minha-fila"
-  visibility_timeout_seconds = 30 # ⏳ Ajuste para evitar reprocessamento imediato
+  visibility_timeout_seconds = 30
 }
 
-# 🔹 Criar Tabela DynamoDB
+# 🔹 DynamoDB (criação “safe” para LocalStack)
 resource "aws_dynamodb_table" "notas_fiscais" {
   name         = "NotasFiscais"
   billing_mode = "PAY_PER_REQUEST"
@@ -34,33 +34,15 @@ resource "aws_dynamodb_table" "notas_fiscais" {
     name = "id"
     type = "S"
   }
+
+  # evita travar no LocalStack
+  lifecycle {
+    create_before_destroy = true
+    ignore_changes        = [stream_enabled]
+  }
 }
 
-# 🔹 Criar Função Lambda Produtor
-resource "aws_lambda_function" "lambda_produtor" {
-  function_name = "LambdaProdutor"
-  role          = aws_iam_role.lambda_exec.arn
-  runtime       = "python3.9"
-  handler       = "lambda_produtor.lambda_handler"
-
-  filename         = "lambda_produtor.zip"
-  source_code_hash = filebase64sha256("lambda_produtor.zip")
-  timeout          = 10
-}
-
-# 🔹 Criar Função Lambda Consumidor
-resource "aws_lambda_function" "lambda_consumidor" {
-  function_name = "LambdaConsumidor"
-  role          = aws_iam_role.lambda_exec.arn
-  runtime       = "python3.9"
-  handler       = "lambda_consumidor.lambda_handler"
-
-  filename         = "lambda_consumidor.zip"
-  source_code_hash = filebase64sha256("lambda_consumidor.zip")
-  timeout          = 30
-}
-
-# 🔹 Criar Role para Lambda com Políticas
+# 🔹 IAM Role e Policy
 resource "aws_iam_role" "lambda_exec" {
   name = "lambda-role"
   assume_role_policy = jsonencode({
@@ -68,52 +50,63 @@ resource "aws_iam_role" "lambda_exec" {
     Statement = [{
       Action = "sts:AssumeRole"
       Effect = "Allow"
-      Principal = {
-        Service = "lambda.amazonaws.com"
-      }
+      Principal = { Service = "lambda.amazonaws.com" }
     }]
   })
 }
 
 resource "aws_iam_policy" "lambda_policy" {
-  name = "LambdaSQSDynamoPolicy"
+  name   = "LambdaSQSDynamoPolicy"
   policy = jsonencode({
     Version = "2012-10-17"
     Statement = [
-      {
-        Effect   = "Allow"
-        Action   = ["sqs:SendMessage"]
-        Resource = aws_sqs_queue.queue.arn
-      },
-      {
-        Effect   = "Allow"
-        Action   = ["sqs:ReceiveMessage", "sqs:DeleteMessage", "sqs:GetQueueAttributes"]
-        Resource = aws_sqs_queue.queue.arn
-      },
-      {
-        Effect   = "Allow"
-        Action   = ["dynamodb:PutItem"]
-        Resource = aws_dynamodb_table.notas_fiscais.arn
-      }
+      { Effect = "Allow", Action = ["sqs:SendMessage"], Resource = aws_sqs_queue.queue.arn },
+      { Effect = "Allow", Action = ["sqs:ReceiveMessage","sqs:DeleteMessage","sqs:GetQueueAttributes"], Resource = aws_sqs_queue.queue.arn },
+      { Effect = "Allow", Action = ["dynamodb:PutItem"], Resource = aws_dynamodb_table.notas_fiscais.arn }
     ]
   })
 }
 
-
-# 🔹 Anexar a política à Role do Lambda
 resource "aws_iam_role_policy_attachment" "lambda_attach" {
   role       = aws_iam_role.lambda_exec.name
   policy_arn = aws_iam_policy.lambda_policy.arn
 }
 
-# 🔹 Criar Trigger para conectar SQS ao Lambda Consumidor
+# 🔹 Lambdas
+resource "aws_lambda_function" "lambda_produtor" {
+  function_name    = "LambdaProdutor"
+  role             = aws_iam_role.lambda_exec.arn
+  runtime          = "python3.9"
+  handler          = "lambda_produtor.lambda_handler"
+  filename         = "lambda_produtor.zip"
+  source_code_hash = filebase64sha256("lambda_produtor.zip")
+  timeout          = 10
+
+  depends_on = [aws_iam_role_policy_attachment.lambda_attach]
+}
+
+resource "aws_lambda_function" "lambda_consumidor" {
+  function_name    = "LambdaConsumidor"
+  role             = aws_iam_role.lambda_exec.arn
+  runtime          = "python3.9"
+  handler          = "lambda_consumidor.lambda_handler"
+  filename         = "lambda_consumidor.zip"
+  source_code_hash = filebase64sha256("lambda_consumidor.zip")
+  timeout          = 30
+
+  depends_on = [aws_iam_role_policy_attachment.lambda_attach]
+}
+
+# 🔹 SQS -> Lambda Trigger
 resource "aws_lambda_event_source_mapping" "sqs_trigger" {
   event_source_arn = aws_sqs_queue.queue.arn
   function_name    = aws_lambda_function.lambda_consumidor.arn
   batch_size       = 1
+
+  depends_on = [aws_lambda_function.lambda_consumidor, aws_sqs_queue.queue]
 }
 
-# 🔹 Criar API Gateway para chamar Lambda Produtor
+# 🔹 API Gateway
 resource "aws_api_gateway_rest_api" "notas_api" {
   name        = "NotasFiscaisAPI"
   description = "API para enviar mensagens ao SQS via Lambda"
@@ -139,6 +132,8 @@ resource "aws_api_gateway_integration" "lambda_integration" {
   integration_http_method = "POST"
   type                    = "AWS_PROXY"
   uri                     = aws_lambda_function.lambda_produtor.invoke_arn
+
+  depends_on = [aws_lambda_permission.apigateway_permission]
 }
 
 resource "aws_lambda_permission" "apigateway_permission" {
@@ -146,14 +141,12 @@ resource "aws_lambda_permission" "apigateway_permission" {
   action        = "lambda:InvokeFunction"
   function_name = aws_lambda_function.lambda_produtor.function_name
   principal     = "apigateway.amazonaws.com"
-
-  source_arn = "${aws_api_gateway_rest_api.notas_api.execution_arn}/*/*"
+  source_arn    = "${aws_api_gateway_rest_api.notas_api.execution_arn}/*/*"
 }
 
 resource "aws_api_gateway_deployment" "notas_api_deployment" {
   rest_api_id = aws_api_gateway_rest_api.notas_api.id
-
-  depends_on = [aws_api_gateway_integration.lambda_integration]
+  depends_on  = [aws_api_gateway_integration.lambda_integration]
 }
 
 resource "aws_api_gateway_stage" "dev" {
@@ -162,10 +155,43 @@ resource "aws_api_gateway_stage" "dev" {
   stage_name    = "dev"
 }
 
-output "api_gateway_id" {
-  value = aws_api_gateway_rest_api.notas_api.id
-}
-
+# 🔹 Outputs
 output "api_gateway_url" {
   value = "http://localhost:4566/restapis/${aws_api_gateway_rest_api.notas_api.id}/dev/_user_request_/notas"
 }
+
+output "sqs_url" {
+  value = aws_sqs_queue.queue.arn
+}
+
+output "lambda_produtor_arn" {
+  value = aws_lambda_function.lambda_produtor.arn
+}
+
+output "lambda_consumidor_arn" {
+  value = aws_lambda_function.lambda_consumidor.arn
+} 
+
+output "dynamodb_table_name" {
+  value = aws_dynamodb_table.notas_fiscais.name
+}
+
+output "dynamodb_table_arn" {
+  value = aws_dynamodb_table.notas_fiscais.arn
+}
+
+output "iam_role_name" {
+  value = aws_iam_role.lambda_exec.name
+}
+
+output "iam_role_arn" {
+  value = aws_iam_role.lambda_exec.arn
+}
+
+output "iam_policy_name" {
+  value = aws_iam_policy.lambda_policy.name
+}
+
+output "iam_policy_arn" {
+  value = aws_iam_policy.lambda_policy.arn
+} 
