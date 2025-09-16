@@ -1,0 +1,74 @@
+Infraestrutura com Terraform:
+	Criar um SQS para receber mensagens.
+	Criar um DynamoDB para armazenar os dados.
+	Criar dois Lambdas:
+	Lambda 1 (Produtor): Envia mensagens para o SQS.
+	Lambda 2 (Consumidor): Lê mensagens do SQS e insere no DynamoDB.
+	Configurar permissões e triggers.
+
+Código das Lambdas:
+	Lambda 1 recebe dados via API Gateway (Postman) e envia ao SQS.
+	Lambda 2 consome mensagens do SQS e insere no DynamoDB.
+
+Execução no LocalStack:
+	Subir infraestrutura com Terraform.
+	Testar o envio e consumo de mensagens.
+
+Comandos TF:
+Subir Infraestrutura (Comandos):
+	terraform init
+	terraform plan
+	terraform apply -auto-approve
+
+Comandos LocalStack:
+	localstack stop
+	localstack start
+
+
+Empacotar as Lambdas:
+	lambda01: zip lambda_produtor.zip lambda_produtor.py
+	lambda02: zip lambda_consumidor.zip lambda_consumidor.py
+
+aws lambda update-function-code --function-name LambdaProdutor --zip-file fileb://lambda_produtor.zip --endpoint-url=http://localhost:4566
+aws lambda update-function-code --function-name LambdaConsumidor --zip-file fileb://lambda_consumidor.zip --endpoint-url=http://localhost:4566
+
+
+Subir as Funções no LocalStack:
+zip lambda_produtor.zip lambda_produtor.py && aws lambda update-function-code --function-name LambdaProdutor --zip-file fileb://lambda_produtor.zip --endpoint-url=http://localhost:4566
+
+
+aws lambda create-function \
+    --function-name LambdaProdutor \
+    --runtime python3.9 \
+    --role arn:aws:iam::000000000000:role/lambda-role \
+    --handler lambda_produtor.lambda_handler \
+    --zip-file fileb://lambda_produtor.zip \
+    --endpoint-url http://localhost:4566
+
+aws lambda create-function \
+    --function-name LambdaConsumidor \
+    --runtime python3.9 \
+    --role arn:aws:iam::000000000000:role/lambda-role \
+    --handler lambda_consumidor.lambda_handler \
+    --zip-file fileb://lambda_consumidor.zip \
+    --endpoint-url http://localhost:4566
+
+Após aplicar a alteração com "terraform apply -auto-approve" o terraform irá exibir no final a URL para teste.
+Sera algo assim, o valor do campo api_gateway_url é a nossa u:
+
+Changes to Outputs:
+  + api_gateway_id  = "tpeinr2jcl"
+  + api_gateway_url = "http://localhost:4566/restapis/tpeinr2jcl/dev/_user_request_/notas"
+  
+
+Testar no Postman:
+	Método: POST
+	URL: http://localhost:4566/restapis/SEU_API_ID/dev/_user_request_/notas
+	Body:
+	{"id":"NF-123","cliente":"João Silva","valor":1000.0,"data_emissao":"2025-02-01"}	
+
+
+Verificar DynamoDB:
+	aws dynamodb scan --table-name NotasFiscais --endpoint-url http://localhost:4566
+
+	
